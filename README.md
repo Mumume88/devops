@@ -1,7 +1,7 @@
 1) В работе используются:
 
 
-     Ubuntu Server.
+     Ubuntu 20.04.
      GitLab.
      Docker Hub.
 
