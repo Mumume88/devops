@@ -1,0 +1,61 @@
+default:
+  tags:
+    - skillfactory
+
+variables:
+  IMAGE_NAME: mydjango
+  IMAGE_PUB_NAME: dmosk/mydjango
+  PROJECT_NAME: django-app
+
+stages:
+  - build-doc
+  - build-helm
+  - install-helm
+
+getVersion:
+  stage: .pre
+  script:
+    - VERSION="$(git describe --tags --match v[0-9]*.[0-9]*.[0-9]* --abbrev=0 2>/dev/null|cut -dv -f2)" || true
+    - test -z "${VERSION}" && VERSION=$(cat VERSION)
+    - echo "VERSION=${VERSION}" > variables.env
+  artifacts:
+    reports:
+      dotenv: variables.env
+
+Build Docker Image:
+  stage: build-doc
+  script:
+    - docker build -t ${IMAGE_NAME}:${VERSION} .
+    - docker login -u "${DOCKER_USERNAME}" -p "${DOCKER_PASSWORD}"
+    - docker tag ${IMAGE_NAME}:${VERSION} ${IMAGE_PUB_NAME}:${VERSION}
+    - docker push ${IMAGE_PUB_NAME}:${VERSION}
+    - sed -s "s/~VERSION~/${VERSION}/g" -i ./Helm/Chart.yaml
+    - sed -s "s/~project_name~/${PROJECT_NAME}/" -i ./Helm/values.yaml
+  artifacts:
+    paths:
+      - ./Helm
+
+Create helm release:
+  stage: build-helm
+  script:
+    - tar zcf ./helm-${VERSION}.tar.gz ./Helm
+  release:
+    name: 'Release $CI_COMMIT_TAG'
+    tag_name: '$CI_COMMIT_TAG'
+    description: 'Created using the release-cli'
+    assets:
+      links:
+        - name: "mydjango-helm-${VERSION}"
+          url: "https://gitlab.com/master.dmosk/django/-/jobs/${CI_JOB_ID}/artifacts/raw/helm-${VERSION}.tar.gz"
+  artifacts:
+    paths:
+      - ./helm-${VERSION}.tar.gz
+  rules:
+    - if: $CI_COMMIT_TAG
+
+Install Helm Application:
+  stage: install-helm
+  script:
+    - ls -l
+    - cat Helm/Chart.yaml
+    - helm install ${PROJECT_NAME} Helm/ --dry-run && helm install ${PROJECT_NAME} Helm/

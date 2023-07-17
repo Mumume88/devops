@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-app
+  labels:
+    app: web_server
+    owner: sergei
+    description: web_server_for_site
+spec:
+  selector:
+    project: {{ .Values.project_name }}-{{ .Chart.Version }}
+  type: NodePort
+  ports:
+    - name: app-http
+      protocol: TCP
+      port: 3003
+      targetPort: 3003

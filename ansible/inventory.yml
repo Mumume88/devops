@@ -1,0 +1,26 @@
+kube_servers:
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+  hosts:
+    server01:
+      ansible_host: master.skill.local
+      ansible_ssh_host: 192.168.10.32
+    server02:
+      ansible_host: worker01.skill.local
+      ansible_ssh_host: 192.168.10.9
+
+  children:
+    master:
+      hosts:
+        server01:
+    worker:
+      hosts:
+        server02:
+
+srv_servers:
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+  hosts:
+    server03:
+      ansible_host: srv.skill.local
+      ansible_ssh_host: 192.168.10.25

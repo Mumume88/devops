@@ -1,0 +1,12 @@
+variables.tf
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+.terraform/
+.cache
+.ssh
+.bash_history
+.bash_logout
+.bashrc
+.profile
+

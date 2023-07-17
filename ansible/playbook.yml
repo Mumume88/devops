@@ -1,0 +1,21 @@
+---
+
+- hosts: kube_servers
+  user: root
+  gather_facts: true
+  become: true
+  become_method: sudo
+  become_user: root
+
+  roles:
+    - kubernetes
+
+- hosts: srv_servers
+  user: root
+  gather_facts: true
+  become: true
+  become_method: sudo
+  become_user: root
+
+  roles:
+    - srv

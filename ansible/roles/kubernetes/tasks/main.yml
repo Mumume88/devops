@@ -1,0 +1,221 @@
+---
+
+- name: Set hostname
+  hostname:
+    name: "{{ hostvars[inventory_hostname].ansible_host }}"
+
+- name: Add to hosts file cluster machines
+  blockinfile:
+    path: /etc/hosts
+    block: |
+      {% for host in groups['kube_servers'] %}
+      {{ hostvars[host].ansible_ssh_host }} {{ hostvars[host].ansible_host }}
+      {% endfor %}
+
+- name: Disable SWAP 1/2 (swapoff)
+  shell: swapoff -a
+
+- name: Disable SWAP 2/2 (fstab)
+  replace:
+    path: /etc/fstab
+    regexp: '^([^#].*?\sswap\s+sw\s+.*)$'
+    replace: '# \1'
+
+- name: Create File
+  file:
+    path: /etc/modules-load.d/k8s.conf
+    state: touch
+    owner: root
+    group: root
+    mode: 0644
+
+- name: Add modules k8s
+  lineinfile:
+    path: /etc/modules-load.d/k8s.conf
+    line: "{{ item }}"
+  loop:
+    - br_netfilter
+    - overlay
+
+- name: Add br_netfilter and overlay modules
+  modprobe:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - br_netfilter
+    - overlay
+
+- name: Set sysctl bridge-nf-call options
+  sysctl:
+    name: "{{ item }}"
+    value: '1'
+    state: present
+    reload: yes
+    sysctl_file: /etc/sysctl.d/k8s.conf
+  loop:
+    - net.bridge.bridge-nf-call-ip6tables
+    - net.bridge.bridge-nf-call-iptables
+
+- name: Docker install
+  package:
+    name:
+      - docker
+      - docker.io
+    state: present
+
+- name: Copy daemon.json config file
+  copy:
+    src: daemon.json
+    dest: /etc/docker/daemon.json
+    remote_src: no
+    mode: 0644
+    owner: root
+    group: root
+
+- name: Docker systemctl enable and start
+  systemd:
+    name: docker
+    enabled: yes
+    state: restarted
+
+- name: Import kubernetes repo key
+  apt_key:
+    url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+    state: present
+
+- name: "Add kubernetes repository"
+  apt_repository:
+    repo: deb https://apt.kubernetes.io/ kubernetes-xenial main
+    filename: kubernetes
+
+- name: kubernetes install
+  apt:
+    name:
+      - kubelet
+      - kubeadm
+      - kubectl
+    state: present
+    update_cache: yes
+
+- name: Hold kubernetes to update
+  dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - kubelet
+    - kubeadm
+    - kubectl
+
+- name: Master Settings
+  block:
+
+    - name: kubeadm init pod-network-cidr
+      shell: kubeadm init --pod-network-cidr=10.244.0.0/16
+      ignore_errors: yes
+
+    - name: Set KUBECONFIG system environment permanently
+      lineinfile:
+        path: /etc/environment
+        line: export KUBECONFIG=/etc/kubernetes/admin.conf
+
+    - name: Install CNI (Container Networking Interface)
+      shell: kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+
+    - name: Get join command
+      shell: kubeadm token create --print-join-command
+      register: join_command
+
+    - name: Open ports on a firewall for Master
+      iptables:
+        action: insert
+        rule_num: 1
+        chain: INPUT
+        protocol: tcp
+        destination_port: "{{ item }}"
+        jump: ACCEPT
+      loop:
+        - "6443"
+        - "2379:2380"
+        - "10250:10252"
+
+  when: "'master' in group_names"
+
+- name: Workers Settings
+  block:
+
+    - name: Open ports on a firewall for Worker
+      iptables:
+        action: insert
+        rule_num: 1
+        chain: INPUT
+        protocol: tcp
+        destination_port: "{{ item }}"
+        jump: ACCEPT
+      loop:
+        - "10250"
+        - "30000:32767"
+
+    - name: kubeadm init pod-network-cidr
+      shell: "{{ hostvars[groups['master'].0].join_command.stdout }}"
+      ignore_errors: yes
+
+  when: "'worker' in group_names"
+
+- name: Install iptables-persistent
+  package:
+    name: iptables-persistent
+    state: present
+
+- name: Save firewall rule
+  shell: netfilter-persistent save
+
+- name: acces port 9100 для Node Exporter
+  iptables:
+    chain: INPUT
+    rule_num: '1'
+    action: insert
+    protocol: tcp
+    jump: ACCEPT
+    destination_port: '9100'
+
+- name: Create user for Node Exporter
+  user:
+    name: nodeusr
+    create_home: no
+    shell: /bin/false
+
+- name: create Node Exporter
+  file:
+    path: /tmp/node_exporter
+    state: directory
+    owner: nodeusr
+    group: nodeusr
+
+- name: Download Node Exporter
+  unarchive:
+    src: https://github.com/prometheus/node_exporter/releases/download/v{{ node_version }}/node_exporter-{{ node_version }}.linux-amd64.tar.gz
+    dest: /tmp/node_exporter
+    creates: /tmp/node_exporter/node_exporter-{{ node_version }}.linux-amd64
+    remote_src: yes
+
+- name: copy node_exporter в /usr/local/bin
+  copy:
+    src: /tmp/node_exporter/node_exporter-{{ node_version }}.linux-amd64/node_exporter
+    dest: /usr/local/bin/
+    remote_src: yes
+    mode: preserve
+    owner: nodeusr
+    group: nodeusr
+
+- name: Create Systemd
+  copy:
+    src: node_exporter.service
+    dest: /etc/systemd/system/
+  notify:
+    - systemd reload
+
+- name: Run node_exporter
+  systemd:
+    name: node_exporter
+    state: started
+    enabled: yes

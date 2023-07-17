@@ -1,0 +1,28 @@
+global:
+  smtp_from: mumume63@mail.ru
+
+route:
+  group_by: ['alertname', 'instance', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 1h
+  receiver: 'web.hook'
+  routes:
+    - receiver: send_email
+
+receivers:
+  - name: 'web.hook'
+    webhook_configs:
+      - url: 'http://127.0.0.1:5001/'
+  - name: send_email
+    email_configs:
+    - to: mumume@mail.ru
+      smarthost: localhost:25
+      require_tls: false
+
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'dev', 'instance']
